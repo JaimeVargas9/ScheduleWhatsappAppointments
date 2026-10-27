@@ -32,6 +32,8 @@ Los negocios pequeños (una peluquería, un estudio de diseño, una clínica de 
 - **Varios negocios a la vez** desde un único programa, cada uno con su número, su configuración, su calendario y su hoja.
 - **Panel web propio** para gente que no sabe de informática: agenda visual, listado de citas, conversaciones, el QR de WhatsApp y formularios sencillos para configurar el negocio.
 
+> **Este repositorio solo contiene el programa.** No incluye ninguna cuenta, clave, número de WhatsApp ni dato de nadie. Para usarlo tienes que conectar tus propias cuentas: mira [Lo que necesitas para que funcione](#lo-que-necesitas-para-que-funcione).
+
 ## Una conversación real, paso a paso
 
 > Ejemplo ficticio con el negocio de prueba incluido, un estudio de diseño web:
@@ -157,6 +159,46 @@ scripts/        seed, alta de negocios, borrado RGPD y prueba de la IA
 tests/          simulaciones de WhatsApp, Google y Ollama
 examples/       negocio de ejemplo listo para usar
 ```
+
+---
+
+# Lo que necesitas para que funcione
+
+Al descargar el repositorio tienes el programa completo, pero **ninguna de las piezas personales** que lo conectan con el mundo. Cada persona que lo use debe poner las suyas:
+
+| Pieza                                                | ¿Viene en el repositorio?        | Qué tienes que hacer                                                                                                                                                           |
+| ---------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Código, panel, tests y negocio de ejemplo            | ✅ Sí                            | Nada.                                                                                                                                                                          |
+| Dependencias (`node_modules/`)                       | ❌ No                            | `npm install` ([paso 4](#4-instalar-y-arrancar)).                                                                                                                              |
+| IA (Ollama y el modelo)                              | ❌ No                            | Instalar Ollama y descargar el modelo en tu equipo ([paso 1](#1-instalar-nodejs-ollama-y-el-modelo)).                                                                          |
+| Archivo `.env` con tu usuario y contraseña del panel | ❌ No                            | Copiar `.env.example` a `.env` y poner tu propia contraseña ([paso 4](#4-instalar-y-arrancar)).                                                                                |
+| Clave de Google (`credentials/google-key.json`)      | ❌ No                            | Crear **tu propio** proyecto de Google Cloud y **tu propia** cuenta de servicio, y descargar su clave ([paso 2](#2-crear-la-cuenta-de-servicio-de-google-gratis-sin-tarjeta)). |
+| Calendario y hoja de Google                          | ❌ No                            | Usar los tuyos y compartirlos con tu cuenta de servicio ([paso 3](#3-lo-que-hace-cada-negocio-en-google)).                                                                     |
+| Número de WhatsApp                                   | ❌ No                            | Vincular el WhatsApp de **tu** negocio escaneando el QR del panel ([paso 4](#4-instalar-y-arrancar)).                                                                          |
+| Datos de tu negocio                                  | ❌ No (solo un ejemplo ficticio) | Rellenar servicios, horario, dirección… en **Mi negocio** ([paso 6](#6-checklist-para-dar-de-alta-un-negocio-nuevo)).                                                          |
+| Base de datos y sesiones (`data/`, `sessions/`)      | ❌ No                            | Se crean solas la primera vez que arrancas.                                                                                                                                    |
+
+### Requisitos del equipo
+
+- **Sistema**: Windows 10 u 11. También funciona en macOS y Linux con los comandos equivalentes. No necesita Docker ni WSL.
+- **Node.js**: 22 o superior.
+- **Para la IA**: 16 GB de RAM y, a ser posible, una tarjeta gráfica NVIDIA con 8 GB de VRAM. Hay modelos más pequeños para equipos modestos ([tabla](#qué-modelo-elijo)).
+- **Espacio en disco**: unos 6 GB libres para el modelo.
+- **Encendido**: el equipo tiene que estar encendido y con internet mientras quieras que el asistente conteste.
+- **Cuentas**: una cuenta de Google (gratuita) y un móvil con WhatsApp para el negocio.
+
+### Lista rápida antes del primer arranque
+
+- [ ] `npm install` terminado sin errores.
+- [ ] Ollama abierto y el modelo descargado (`ollama list` lo muestra).
+- [ ] `.env` creado a partir de `.env.example`, con tu contraseña.
+- [ ] `credentials/google-key.json` con la clave de **tu** cuenta de servicio.
+- [ ] Tu calendario y tu hoja compartidos con el correo de esa cuenta de servicio.
+- [ ] `npm run seed` (crea el negocio de ejemplo) o un negocio nuevo creado desde el panel.
+
+Con eso, `npm run dev` arranca el asistente y el panel. La consola avisa de lo que falte (Ollama apagado, modelo sin descargar o Google sin configurar), con el comando para arreglarlo. Sin la clave de Google también funciona: las citas se guardan solo en local.
+
+> 🔒 **Nunca subas a GitHub ni compartas** tu `.env`, tu carpeta `credentials/`, `data/` ni `sessions/`. El `.gitignore` del proyecto ya los excluye. Si alguna vez se filtra tu clave de Google, bórrala en Google Cloud (**Cuentas de servicio → tu cuenta → Claves**) y crea otra: la antigua deja de funcionar al momento.
 
 ---
 
