@@ -72,6 +72,7 @@ export const appointments = sqliteTable(
       .default('confirmada'),
     notes: text('notes').notNull().default(''),
     calendarEventId: text('calendar_event_id'),
+    pendingConfirmation: integer('pending_confirmation', { mode: 'boolean' }).notNull().default(false),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },

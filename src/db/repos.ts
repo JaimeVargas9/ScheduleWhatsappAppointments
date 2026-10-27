@@ -46,6 +46,14 @@ export function getOrCreateConversation(db: Db, tenantId: string, phone: string,
   return { ...conv, jid };
 }
 
+export function findConversation(db: Db, tenantId: string, phone: string) {
+  return db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.tenantId, tenantId), eq(conversations.phone, phone)))
+    .get();
+}
+
 export function getConversation(db: Db, id: number) {
   return db.select().from(conversations).where(eq(conversations.id, id)).get();
 }

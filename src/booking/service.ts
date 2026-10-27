@@ -115,8 +115,19 @@ export class BookingService {
     return comprobarHueco(await this.context(tenant, req, ignore), start);
   }
 
-  async list(tenant: TenantConfig, req: SlotRequest, from: DateTime, to: DateTime) {
-    return huecosEnRango(await this.context(tenant, req), from, to);
+  async list(tenant: TenantConfig, req: SlotRequest, from: DateTime, to: DateTime, ignore?: Appointment) {
+    return huecosEnRango(await this.context(tenant, req, ignore), from, to);
+  }
+
+  requestFor(tenant: TenantConfig, cita: Appointment): SlotRequest {
+    const service = tenant.servicios.find((s) => s.id === cita.serviceId);
+    const location = tenant.ubicaciones.find((u) => u.id === cita.locationId);
+    if (!service || !location) throw new Error('El servicio o la ubicación de esta cita ya no existen.');
+    return {
+      service,
+      location,
+      professional: tenant.profesionales.find((p) => p.id === cita.professionalId),
+    };
   }
 
   async create(
@@ -152,6 +163,7 @@ export class BookingService {
         status: 'confirmada',
         notes: input.notes ?? '',
         calendarEventId: null,
+        pendingConfirmation: false,
         createdAt: this.clock().toUTC().toISO()!,
         updatedAt: this.clock().toUTC().toISO()!,
       };
@@ -171,7 +183,7 @@ export class BookingService {
 
   async cancel(tenant: TenantConfig, cita: Appointment): Promise<Appointment> {
     return runExclusive(`booking:${tenant.id}`, async () => {
-      const updated: Appointment = { ...cita, status: 'cancelada' };
+      const updated: Appointment = { ...cita, status: 'cancelada', pendingConfirmation: false };
       const calendarId = this.calendarOf(tenant, cita);
       if (calendarId && cita.calendarEventId) {
         await this.google.calendar.updateEvent(calendarId, cita.calendarEventId, {
@@ -179,20 +191,22 @@ export class BookingService {
           cancelled: true,
         });
       }
-      updateAppointment(this.db, cita.id, { status: 'cancelada' });
+      updateAppointment(this.db, cita.id, { status: 'cancelada', pendingConfirmation: false });
       await this.syncSheet(tenant, updated, 'update');
       addLog(this.db, 'info', 'cita_cancelada', tenant.id, { id: cita.id });
       return updated;
     });
   }
 
-  async reschedule(tenant: TenantConfig, cita: Appointment, newStart: DateTime): Promise<BookingResult> {
+  async reschedule(
+    tenant: TenantConfig,
+    cita: Appointment,
+    newStart: DateTime,
+    opts: { byBusiness?: boolean } = {},
+  ): Promise<BookingResult> {
     return runExclusive(`booking:${tenant.id}`, async () => {
-      const service = tenant.servicios.find((s) => s.id === cita.serviceId);
-      const location = tenant.ubicaciones.find((u) => u.id === cita.locationId);
-      if (!service || !location) throw new Error('El servicio o la ubicación de esta cita ya no existen.');
-      const professional = tenant.profesionales.find((p) => p.id === cita.professionalId);
-      const r = await this.check(tenant, { service, location, professional }, newStart, cita);
+      const req = this.requestFor(tenant, cita);
+      const r = await this.check(tenant, req, newStart, cita);
       if (!r.libre)
         return {
           creada: false,
@@ -205,23 +219,59 @@ export class BookingService {
       const updated: Appointment = {
         ...cita,
         start: start.toUTC().toISO()!,
-        end: start.plus({ minutes: service.duracion_min }).toUTC().toISO()!,
+        end: start.plus({ minutes: req.service.duracion_min }).toUTC().toISO()!,
         status: 'reprogramada',
+        pendingConfirmation: !!opts.byBusiness,
       };
       const calendarId = this.calendarOf(tenant, cita);
       if (calendarId && cita.calendarEventId) {
         const ev = this.eventFor(tenant, updated);
         await this.google.calendar.updateEvent(calendarId, cita.calendarEventId, {
+          summary: ev.summary,
           start: ev.start,
           end: ev.end,
           timeZone: ev.timeZone,
           description: ev.description,
         });
       }
-      updateAppointment(this.db, cita.id, { start: updated.start, end: updated.end, status: 'reprogramada' });
+      updateAppointment(this.db, cita.id, {
+        start: updated.start,
+        end: updated.end,
+        status: 'reprogramada',
+        pendingConfirmation: updated.pendingConfirmation,
+      });
       await this.syncSheet(tenant, updated, 'update');
-      addLog(this.db, 'info', 'cita_reprogramada', tenant.id, { id: cita.id, inicio: updated.start });
+      addLog(
+        this.db,
+        'info',
+        opts.byBusiness ? 'cita_cambiada_por_negocio' : 'cita_reprogramada',
+        tenant.id,
+        {
+          id: cita.id,
+          inicio: updated.start,
+        },
+      );
       return { creada: true, cita: updated };
+    });
+  }
+
+  async confirm(
+    tenant: TenantConfig,
+    cita: Appointment,
+    opts: { byClient?: boolean } = { byClient: true },
+  ): Promise<Appointment> {
+    return runExclusive(`booking:${tenant.id}`, async () => {
+      const updated: Appointment = { ...cita, pendingConfirmation: false };
+      const calendarId = this.calendarOf(tenant, cita);
+      if (calendarId && cita.calendarEventId) {
+        await this.google.calendar.updateEvent(calendarId, cita.calendarEventId, {
+          summary: this.eventFor(tenant, updated).summary,
+        });
+      }
+      updateAppointment(this.db, cita.id, { pendingConfirmation: false });
+      await this.syncSheet(tenant, updated, 'update');
+      if (opts.byClient) addLog(this.db, 'info', 'cita_confirmada_por_cliente', tenant.id, { id: cita.id });
+      return updated;
     });
   }
 
@@ -253,7 +303,7 @@ export class BookingService {
   eventFor(tenant: TenantConfig, cita: Appointment) {
     const zone = tenant.zona_horaria;
     return {
-      summary: `${cita.serviceName} — ${cita.clientName}`,
+      summary: `${cita.serviceName} — ${cita.clientName}${cita.pendingConfirmation ? ' (pendiente de confirmar)' : ''}`,
       location: cita.address || cita.locationName,
       description: [`Teléfono: +${cita.phone}`, cita.notes && `Notas: ${cita.notes}`, `ID cita: ${cita.id}`]
         .filter(Boolean)
@@ -278,7 +328,7 @@ export class BookingService {
       cita.address,
       local(cita.start),
       local(cita.end),
-      ESTADO_HOJA[cita.status],
+      cita.pendingConfirmation ? 'Pendiente de confirmar' : ESTADO_HOJA[cita.status],
       cita.notes,
     ];
   }

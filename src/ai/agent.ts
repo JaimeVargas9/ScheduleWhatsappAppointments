@@ -17,7 +17,7 @@ import { TOOL_DEFINITIONS, runTool } from './tools/index.js';
 
 const MAX_STEPS = 8;
 const MAX_NUDGES = 2;
-const BOOKING_OK = /"(creada|cancelada|reprogramada)":true/;
+const BOOKING_OK = /"(creada|cancelada|reprogramada|confirmada)":true/;
 const FALLBACK =
   'Perdona, ahora mismo no puedo atenderte bien. Le paso tu mensaje al responsable y te contestará en breve.';
 const ASK_AGAIN =

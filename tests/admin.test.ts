@@ -15,7 +15,13 @@ function setup() {
     DateTime.fromISO('2026-10-27T08:00', { zone: 'Europe/Madrid' }),
   );
   const synced: string[] = [];
+  const notified: { phone: string; text: string }[] = [];
+  const notifyResult: { value: { sent: boolean; reason?: string } } = { value: { sent: true } };
   const sessions = {
+    notify: async (_t: string, phone: string, text: string) => {
+      notified.push({ phone, text });
+      return notifyResult.value;
+    },
     sync: async (ts: { id: string }[]) => void synced.push(...ts.map((t) => t.id)),
     status: async () => ({
       status: 'esperando_qr',
@@ -55,7 +61,7 @@ function setup() {
       headers: { cookie, 'content-type': 'application/json', ...(init.headers ?? {}) },
     });
   };
-  return { app, req, login, db, tenant, booking, synced, ...g };
+  return { app, req, login, db, tenant, booking, synced, notified, notifyResult, ...g };
 }
 
 describe('panel de control', () => {
@@ -140,6 +146,107 @@ describe('panel de control', () => {
       handoff: boolean;
     }[];
     expect(list[0]!.handoff).toBe(false);
+  });
+});
+
+describe('cambiar y cancelar citas desde la agenda', () => {
+  const at = (iso: string) => DateTime.fromISO(iso, { zone: 'Europe/Madrid' });
+  async function withAppointment() {
+    const s = setup();
+    getOrCreateConversation(s.db, 'mi-estudio-web', '34600111222', '34600111222@s.whatsapp.net');
+    const r = await s.booking.create(s.tenant, {
+      service: s.tenant.servicios[0]!,
+      location: s.tenant.ubicaciones[0]!,
+      phone: '34600111222',
+      clientName: 'Marta Ruiz',
+      start: at('2026-10-29T10:00'),
+    });
+    if (!r.creada) throw new Error('debería crearse');
+    return { ...s, cita: r.cita, base: `/api/tenants/mi-estudio-web/appointments/${r.cita.id}` };
+  }
+
+  it('lista las horas libres de un día contando como libre el hueco de la propia cita', async () => {
+    const s = await withAppointment();
+    const slots = (await (await s.req(`${s.base}/slots?date=2026-10-29`)).json()) as { hora: string }[];
+    expect(slots.map((x) => x.hora)).toContain('10:00');
+    expect(slots[0]).toMatchObject({ hora: '09:00' });
+    expect((await s.req(`${s.base}/slots?date=29-10-2026`)).status).toBe(400);
+  });
+
+  it('al cambiarla queda pendiente de confirmar y se pregunta al cliente por WhatsApp', async () => {
+    const s = await withAppointment();
+    const res = await s.req(`${s.base}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ inicio: '2026-10-30T12:00', nota: 'Nos ha surgido un imprevisto.' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      cita: { pendingConfirmation: boolean; start: string };
+      aviso: unknown;
+    };
+    expect(body.cita).toMatchObject({ pendingConfirmation: true, start: '2026-10-30T11:00:00.000Z' });
+    expect(body.aviso).toEqual({ sent: true });
+    expect(s.notified).toHaveLength(1);
+    expect(s.notified[0]!.phone).toBe('34600111222');
+    expect(s.notified[0]!.text).toContain('Hola Marta');
+    expect(s.notified[0]!.text).toContain('era el jueves 29 de octubre a las 10:00');
+    expect(s.notified[0]!.text).toContain('*viernes 30 de octubre a las 12:00*');
+    expect(s.notified[0]!.text).toContain('Nos ha surgido un imprevisto.');
+    expect(s.notified[0]!.text).toContain('¿Te viene bien?');
+    expect(s.sheets.rows[1]![10]).toBe('Pendiente de confirmar');
+    expect([...s.calendar.events.values()][0]!.summary).toContain('(pendiente de confirmar)');
+  });
+
+  it('si el nuevo hueco está ocupado no cambia nada y devuelve alternativas', async () => {
+    const s = await withAppointment();
+    s.calendar.block('cal', '2026-10-30T12:00:00+01:00', '2026-10-30T13:00:00+01:00');
+    const res = await s.req(`${s.base}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ inicio: '2026-10-30T12:00' }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { alternativas: unknown[] }).alternativas.length).toBeGreaterThan(0);
+    expect(s.notified).toHaveLength(0);
+  });
+
+  it('si el aviso no llega (WhatsApp desconectado), el cambio no queda pendiente de confirmar', async () => {
+    const s = await withAppointment();
+    s.notifyResult.value = { sent: false, reason: 'el WhatsApp del negocio no está conectado' };
+    const res = await s.req(`${s.base}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ inicio: '2026-10-30T12:00' }),
+    });
+    const body = (await res.json()) as { cita: { pendingConfirmation: boolean }; aviso: { sent: boolean } };
+    expect(body.aviso.sent).toBe(false);
+    expect(body.cita.pendingConfirmation).toBe(false);
+    expect(s.sheets.rows[1]![10]).toBe('Reprogramada');
+  });
+
+  it('sin avisar al cliente, el cambio no queda pendiente de confirmar', async () => {
+    const s = await withAppointment();
+    const res = await s.req(`${s.base}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ inicio: '2026-10-30T12:00', avisar: false }),
+    });
+    expect(((await res.json()) as { cita: { pendingConfirmation: boolean } }).cita.pendingConfirmation).toBe(
+      false,
+    );
+    expect(s.notified).toHaveLength(0);
+  });
+
+  it('al cancelarla se avisa al cliente con el motivo', async () => {
+    const s = await withAppointment();
+    const res = await s.req(`${s.base}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ nota: 'Estamos de baja.' }),
+    });
+    expect(res.status).toBe(200);
+    expect(s.notified[0]!.text).toContain(
+      '*cancelar* tu cita de Reunión inicial gratuita del jueves 29 de octubre a las 10:00',
+    );
+    expect(s.notified[0]!.text).toContain('Estamos de baja.');
+    expect(s.sheets.rows[1]![10]).toBe('Cancelada');
+    expect((await s.req(`${s.base}/cancel`, { method: 'POST' })).status).toBe(400);
   });
 });
 

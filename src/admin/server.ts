@@ -5,6 +5,8 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie';
 import { DateTime } from 'luxon';
+import { z } from 'zod';
+import { cancellationMessage, rescheduleMessage } from '../booking/messages.js';
 import type { LLMProvider } from '../ai/llm.js';
 import type { BookingService } from '../booking/service.js';
 import type { Db } from '../db/client.js';
@@ -83,8 +85,9 @@ export function createAdminApp(deps: AdminDeps) {
   });
 
   app.onError((err, c) => {
-    log.error({ err: err.message, path: c.req.path }, 'Error en el panel');
-    return c.json({ error: err.message }, 400);
+    const message = err instanceof z.ZodError ? err.issues.map((i) => i.message).join(', ') : err.message;
+    log.error({ err: message, path: c.req.path }, 'Error en el panel');
+    return c.json({ error: message }, 400);
   });
 
   const tenantOr404 = (c: Context): TenantConfig => {
@@ -184,7 +187,7 @@ export function createAdminApp(deps: AdminDeps) {
       title: `${a.clientName} · ${a.serviceName}`,
       start: a.start,
       end: a.end,
-      classNames: [`ev-${a.status}`],
+      classNames: [a.pendingConfirmation ? 'ev-pendiente' : `ev-${a.status}`],
       extendedProps: { kind: 'cita', ...a },
     }));
     let warning: string | null = null;
@@ -212,12 +215,56 @@ export function createAdminApp(deps: AdminDeps) {
     return c.json({ events, warning });
   });
 
+  const activeAppointment = (c: Context, t: TenantConfig) => {
+    const cita = getAppointment(db, t.id, c.req.param('aid') ?? '');
+    if (!cita) throw new Error('Cita no encontrada');
+    if (cita.status === 'cancelada') throw new Error('La cita ya está cancelada');
+    return cita;
+  };
+  const changeBody = z.object({
+    nota: z.string().max(500).optional(),
+    avisar: z.boolean().default(true),
+  });
+
+  app.get('/api/tenants/:id/appointments/:aid/slots', async (c) => {
+    const t = tenantOr404(c);
+    const cita = activeAppointment(c, t);
+    const date = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha no válida')
+      .parse(c.req.query('date'));
+    const day = DateTime.fromISO(date, { zone: t.zona_horaria });
+    const slots = await booking.list(t, booking.requestFor(t, cita), day, day, cita);
+    return c.json(
+      slots.map((s) => ({ inicio: s.inicio.slice(0, 16), hora: s.inicio.slice(11, 16), texto: s.texto })),
+    );
+  });
+
   app.post('/api/tenants/:id/appointments/:aid/cancel', async (c) => {
     const t = tenantOr404(c);
-    const cita = getAppointment(db, t.id, c.req.param('aid'));
-    if (!cita) throw new Error('Cita no encontrada');
-    if (cita.status === 'cancelada') throw new Error('La cita ya estaba cancelada');
-    return c.json(await booking.cancel(t, cita));
+    const cita = activeAppointment(c, t);
+    const body = changeBody.parse(await c.req.json().catch(() => ({})));
+    const updated = await booking.cancel(t, cita);
+    const aviso = body.avisar
+      ? await sessions.notify(t.id, cita.phone, cancellationMessage(t, cita, body.nota))
+      : null;
+    return c.json({ cita: updated, aviso });
+  });
+
+  app.post('/api/tenants/:id/appointments/:aid/reschedule', async (c) => {
+    const t = tenantOr404(c);
+    const cita = activeAppointment(c, t);
+    const body = changeBody
+      .extend({ inicio: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'Fecha y hora no válidas') })
+      .parse(await c.req.json());
+    const start = DateTime.fromISO(body.inicio, { zone: t.zona_horaria });
+    const r = await booking.reschedule(t, cita, start, { byBusiness: body.avisar });
+    if (!r.creada) return c.json(r, 409);
+    const aviso = body.avisar
+      ? await sessions.notify(t.id, cita.phone, rescheduleMessage(t, cita, r.cita, body.nota))
+      : null;
+    const final = aviso && !aviso.sent ? await booking.confirm(t, r.cita, { byClient: false }) : r.cita;
+    return c.json({ cita: final, aviso });
   });
 
   app.get('/api/tenants/:id/sheet', async (c) => {

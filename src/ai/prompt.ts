@@ -44,7 +44,8 @@ Reglas:
 13. Antes de crear la cita, pregunta SIEMPRE a nombre de quién la reservas, aunque ya conozcas un nombre, y usa exactamente el nombre que te diga el cliente. Nunca te inventes un nombre.
 14. Las fechas que pases a las herramientas van en formato AAAA-MM-DD o AAAA-MM-DDTHH:MM (hora local del negocio). Calcula "mañana", "el jueves", etc. a partir de la fecha actual de arriba.
 15. Si una herramienta devuelve un error, corrige los datos y vuelve a intentarlo, o pregunta al cliente lo que falte.
-16. La cita NO existe hasta que crear_cita responde "creada": true. En cuanto tengas servicio, modalidad, hueco libre comprobado, nombre y el sí del cliente, tu siguiente paso es llamar a crear_cita, no escribir un texto. No digas "reservada", "confirmada" ni "te espero" antes de eso.`;
+16. La cita NO existe hasta que crear_cita responde "creada": true. En cuanto tengas servicio, modalidad, hueco libre comprobado, nombre y el sí del cliente, tu siguiente paso es llamar a crear_cita, no escribir un texto. No digas "reservada", "confirmada" ni "te espero" antes de eso.
+17. Si una cita aparece como PENDIENTE DE CONFIRMAR, es porque el negocio la ha cambiado de día u hora y le ha preguntado al cliente si le viene bien. Si el cliente acepta, llama a confirmar_cita con su id y confírmale el día y la hora. Si no puede, pregúntale qué día y hora prefiere, llama a consultar_disponibilidad, ofrécele huecos reales y, cuando elija uno, llama a reprogramar_cita con ese id. Si quiere anularla, usa cancelar_cita.`;
 
 const NOMBRE_DIA: Record<(typeof DIAS)[number], string> = {
   lunes: 'Lunes',
@@ -125,7 +126,7 @@ function textoCitas(tenant: TenantConfig, citas: Appointment[]): string {
     citas
       .map(
         (c) =>
-          `- ${c.id}: ${c.serviceName}, ${huecoTexto(DateTime.fromISO(c.start).setZone(tenant.zona_horaria))} (${c.locationName}), a nombre de ${c.clientName}`,
+          `- ${c.id}: ${c.serviceName}, ${huecoTexto(DateTime.fromISO(c.start).setZone(tenant.zona_horaria))} (${c.locationName}), a nombre de ${c.clientName}${c.pendingConfirmation ? ' — PENDIENTE DE CONFIRMAR: el negocio la ha cambiado a esta fecha y espera la respuesta del cliente' : ''}`,
       )
       .join('\n')
   );

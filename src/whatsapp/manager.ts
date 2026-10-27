@@ -15,7 +15,13 @@ import QRCode from 'qrcode';
 import { addLog } from '../db/repos.js';
 import type { TenantConfig } from '../tenants/schema.js';
 import { log } from '../util/log.js';
-import { handleInbound, type PipelineDeps, type Transport } from './inbound.js';
+import {
+  handleInbound,
+  notifyClient,
+  type NotifyResult,
+  type PipelineDeps,
+  type Transport,
+} from './inbound.js';
 import { normalizeMessage, userOf, type OwnIdentity } from './jid.js';
 
 export type WaStatus = 'desconectado' | 'conectando' | 'esperando_qr' | 'conectado' | 'sesion_cerrada';
@@ -67,6 +73,13 @@ export class SessionManager {
       },
       typing: (jid, on) => sock.sendPresenceUpdate(on ? 'composing' : 'paused', jid),
     };
+  }
+
+  async notify(tenantId: string, phone: string, text: string): Promise<NotifyResult> {
+    const tenant = this.deps.getTenant(tenantId);
+    if (!tenant) return { sent: false, reason: 'el negocio no existe' };
+    const connected = this.sessions.get(tenantId)?.status === 'conectado';
+    return notifyClient(this.deps, tenant, phone, text, connected ? this.transport(tenantId) : undefined);
   }
 
   stop(tenantId: string): void {

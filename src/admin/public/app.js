@@ -329,10 +329,8 @@ async function home(alive) {
 }
 
 function timelineItem(a, withDay = false) {
-  const status =
-    a.status === 'reprogramada'
-      ? '<span class="badge warn">Cambiada</span>'
-      : '<span class="badge ok">Confirmada</span>';
+  const [cls, text] = appointmentStatus(a);
+  const status = `<span class="badge ${cls}">${a.pendingConfirmation ? 'Sin confirmar' : text}</span>`;
   return `<li>
     <time>${hhmm(a.start)}${withDay ? `<small>${esc(dayShort(a.start))}</small>` : ''}</time>
     <div class="who"><b>${esc(a.clientName)}</b><span>${esc(a.serviceName)} · ${esc(a.locationName)}</span></div>
@@ -350,6 +348,7 @@ async function agenda(alive) {
       <div class="legend">
         <span><i style="background:var(--brand)"></i>Confirmada</span>
         <span><i style="background:#b26b00"></i>Cambiada de hora</span>
+        <span><i style="background:var(--warn-soft);border:1.5px dashed var(--warn)"></i>Esperando que el cliente confirme</span>
         <span><i style="border:1px dashed var(--line-strong)"></i>Cancelada</span>
         <span><i style="background:repeating-linear-gradient(-45deg,var(--surface-2) 0 3px,var(--line) 3px 6px)"></i>Ocupado en tu calendario</span>
       </div>
@@ -396,18 +395,34 @@ async function agenda(alive) {
   every(30000, () => state.calendar === cal && cal.refetchEvents());
 }
 
+function appointmentStatus(a) {
+  if (a.status === 'cancelada') return ['bad', 'Cancelada'];
+  if (a.pendingConfirmation) return ['warn', 'Esperando respuesta del cliente'];
+  if (a.status === 'reprogramada') return ['info', 'Cambiada de hora'];
+  return ['ok', 'Confirmada'];
+}
+
+function avisoText(aviso, done) {
+  if (!aviso) return `${done}.`;
+  return aviso.sent
+    ? `${done} y le hemos avisado por WhatsApp.`
+    : `${done}, pero no se ha podido avisar al cliente (${aviso.reason}). Avísale tú.`;
+}
+
 function openAppointment(a) {
-  const statusBadge = { confirmada: 'ok', reprogramada: 'warn', cancelada: 'bad' }[a.status];
-  const statusText = { confirmada: 'Confirmada', reprogramada: 'Cambiada de hora', cancelada: 'Cancelada' }[
-    a.status
-  ];
+  const [cls, text] = appointmentStatus(a);
+  const active = a.status !== 'cancelada';
+  const localDate = (iso) =>
+    fmt(iso, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').reverse().join('-');
+  const today = localDate(new Date().toISOString());
   openDrawer(`
     <div class="drawer-head">
-      <div><span class="badge ${statusBadge}">${statusText}</span><h1 style="margin-top:10px">${esc(a.clientName)}</h1><p class="sub">${esc(a.serviceName)}</p></div>
+      <div><span class="badge ${cls}">${text}</span><h1 style="margin-top:10px">${esc(a.clientName)}</h1><p class="sub">${esc(a.serviceName)}</p></div>
       <button class="icon-btn" data-close aria-label="Cerrar">${icon('x')}</button>
     </div>
+    ${a.pendingConfirmation ? `<div class="notice warn">${icon('clock')}<div>Has cambiado esta cita y el asistente está esperando a que el cliente confirme. Si no le viene bien, le ofrecerá otros huecos.</div></div>` : ''}
     <dl class="details">
-      <dt>Día</dt><dd style="text-transform:capitalize">${esc(dayLong(a.start))}</dd>
+      <dt>Día</dt><dd>${esc(dayLong(a.start).replace(/^./, (c) => c.toUpperCase()))}</dd>
       <dt>Hora</dt><dd>${hhmm(a.start)} – ${hhmm(a.end)}</dd>
       <dt>Dónde</dt><dd>${esc(a.locationName)}${a.address ? `<br><span class="muted">${esc(a.address)}</span>` : ''}</dd>
       ${a.professionalName ? `<dt>Profesional</dt><dd>${esc(a.professionalName)}</dd>` : ''}
@@ -417,26 +432,123 @@ function openAppointment(a) {
       <dt>Código</dt><dd class="mono">${esc(a.id)}</dd>
     </dl>
     ${
-      a.status !== 'cancelada'
-        ? `<button class="btn btn-danger btn-block" data-cancel>${icon('x')}Cancelar esta cita</button>
-           <p class="sub" style="font-size:13px">Se marcará como cancelada en tu calendario y en la hoja. Avisa tú al cliente.</p>`
+      active
+        ? `<div class="drawer-actions" id="appt-actions">
+             <button class="btn btn-block" data-mode="move">${icon('calendar')}Cambiar fecha u hora</button>
+             <button class="btn btn-danger btn-block" data-mode="cancel">${icon('x')}Cancelar cita</button>
+           </div>
+           <div id="appt-panel"></div>`
         : ''
     }`);
-  const btn = $('#drawer [data-cancel]');
-  if (btn)
+  if (!active) return;
+
+  const panel = $('#appt-panel');
+  const notifyFields = (placeholder) => `
+    <label class="field"><span>Mensaje para el cliente (opcional)</span>
+      <textarea id="appt-note" rows="2" placeholder="${esc(placeholder)}"></textarea></label>
+    <label class="toggle"><input type="checkbox" id="appt-notify" checked />Avisar al cliente por WhatsApp</label>`;
+
+  const finish = (msg, bad = false) => {
+    toast(msg, bad);
+    closeDrawer();
+    state.calendar?.refetchEvents();
+  };
+
+  const showCancel = () => {
+    panel.innerHTML = `<div class="drawer-form">
+      <h2>Cancelar la cita</h2>
+      ${notifyFields('Por ejemplo: nos ha surgido un imprevisto, perdona las molestias.')}
+      <p class="sub" style="font-size:13px;margin:0">Le diremos que se ha cancelado y le ofreceremos buscar otro hueco.</p>
+      <div class="drawer-buttons"><button class="btn btn-secondary" data-back>Volver</button>
+        <button class="btn btn-danger" data-confirm-cancel>${icon('x')}Cancelar cita</button></div>
+    </div>`;
+    panel.querySelector('[data-back]').onclick = () => (panel.innerHTML = '');
+    const btn = panel.querySelector('[data-confirm-cancel]');
     btn.onclick = async () => {
-      if (!confirm(`¿Cancelar la cita de ${a.clientName}?`)) return;
       btn.disabled = true;
       try {
-        await api(`/api/tenants/${state.tenant}/appointments/${a.id}/cancel`, { method: 'POST' });
-        toast('Cita cancelada');
-        closeDrawer();
-        state.calendar?.refetchEvents();
+        const r = await api(`/api/tenants/${state.tenant}/appointments/${a.id}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ nota: $('#appt-note').value, avisar: $('#appt-notify').checked }),
+        });
+        finish(avisoText(r.aviso, 'Cita cancelada'), r.aviso && !r.aviso.sent);
       } catch (e) {
         toast(e.message, true);
         btn.disabled = false;
       }
     };
+  };
+
+  const showMove = () => {
+    panel.innerHTML = `<div class="drawer-form">
+      <h2>Cambiar fecha u hora</h2>
+      <label class="field"><span>Nuevo día</span><input type="date" id="appt-date" min="${today}" value="${localDate(a.start) < today ? today : localDate(a.start)}" /></label>
+      <div class="field"><span>Horas libres ese día</span><div class="slot-grid" id="appt-slots"><span class="muted">Buscando huecos…</span></div></div>
+      ${notifyFields('Por ejemplo: nos ha surgido un imprevisto ese día.')}
+      <p class="sub" style="font-size:13px;margin:0">El asistente le preguntará si le viene bien. Si no puede, le ofrecerá otros huecos libres.</p>
+      <div class="drawer-buttons"><button class="btn btn-secondary" data-back>Volver</button>
+        <button class="btn" data-confirm-move disabled>${icon('check')}Cambiar cita</button></div>
+    </div>`;
+    panel.querySelector('[data-back]').onclick = () => (panel.innerHTML = '');
+    let chosen = null;
+    const currentStart = `${localDate(a.start)}T${hhmm(a.start)}`;
+    const btn = panel.querySelector('[data-confirm-move]');
+    const loadSlots = async () => {
+      chosen = null;
+      btn.disabled = true;
+      const box = $('#appt-slots');
+      box.innerHTML = '<span class="muted">Buscando huecos…</span>';
+      try {
+        const slots = await api(
+          `/api/tenants/${state.tenant}/appointments/${a.id}/slots?date=${$('#appt-date').value}`,
+        );
+        if (!$('#appt-slots')) return;
+        box.innerHTML = slots.length
+          ? slots
+              .map((s) =>
+                s.inicio === currentStart
+                  ? `<button type="button" class="slot-pick current" disabled title="Hora actual de la cita">${esc(s.hora)}<small>actual</small></button>`
+                  : `<button type="button" class="slot-pick" data-start="${esc(s.inicio)}" title="${esc(s.texto)}">${esc(s.hora)}</button>`,
+              )
+              .join('')
+          : '<span class="muted">No hay huecos libres ese día. Prueba con otro.</span>';
+        box.querySelectorAll('.slot-pick:not(.current)').forEach(
+          (b) =>
+            (b.onclick = () => {
+              box.querySelectorAll('.slot-pick').forEach((x) => x.classList.toggle('active', x === b));
+              chosen = b.dataset.start;
+              btn.disabled = false;
+            }),
+        );
+      } catch (e) {
+        box.innerHTML = `<span class="muted">${esc(e.message)}</span>`;
+      }
+    };
+    $('#appt-date').onchange = loadSlots;
+    loadSlots();
+    btn.onclick = async () => {
+      if (!chosen) return;
+      btn.disabled = true;
+      try {
+        const r = await api(`/api/tenants/${state.tenant}/appointments/${a.id}/reschedule`, {
+          method: 'POST',
+          body: JSON.stringify({
+            inicio: chosen,
+            nota: $('#appt-note').value,
+            avisar: $('#appt-notify').checked,
+          }),
+        });
+        finish(avisoText(r.aviso, 'Cita cambiada'), r.aviso && !r.aviso.sent);
+      } catch (e) {
+        toast(e.message, true);
+        btn.disabled = false;
+        loadSlots();
+      }
+    };
+  };
+
+  $('#appt-actions [data-mode="move"]').onclick = showMove;
+  $('#appt-actions [data-mode="cancel"]').onclick = showCancel;
 }
 
 function openDrawer(html) {
@@ -525,6 +637,7 @@ const TOOL_LABEL = {
   listar_servicios: 'Revisó los servicios',
   consultar_disponibilidad: 'Consultó la agenda',
   crear_cita: 'Reservó la cita',
+  confirmar_cita: 'El cliente aceptó el cambio de hora',
   ver_citas_cliente: 'Revisó las citas del cliente',
   cancelar_cita: 'Canceló la cita',
   reprogramar_cita: 'Cambió la cita de hora',
@@ -548,6 +661,7 @@ function toolSummary(name, content) {
   if (name === 'crear_cita')
     return r.creada ? `${r.cita.cuando} · código ${r.cita.id}` : 'el hueco ya no estaba libre';
   if (name === 'reprogramar_cita') return r.reprogramada ? r.cita.cuando : 'el nuevo hueco no estaba libre';
+  if (name === 'confirmar_cita') return r.confirmada ? r.cita.cuando : '';
   if (name === 'ver_citas_cliente') return `${r.citas?.length || 0} citas`;
   return '';
 }
@@ -1397,6 +1511,19 @@ const EVENTS = {
   cita_creada: ['ok', 'check', 'Cita reservada', (d) => `Código ${d.id}`],
   cita_cancelada: ['warn', 'x', 'Cita cancelada', (d) => `Código ${d.id}`],
   cita_reprogramada: ['warn', 'clock', 'Cita cambiada de hora', (d) => `Código ${d.id}`],
+  cita_cambiada_por_negocio: [
+    'warn',
+    'calendar',
+    'Has cambiado una cita',
+    (d) => `Código ${d.id} · esperando que el cliente confirme`,
+  ],
+  cita_confirmada_por_cliente: [
+    'ok',
+    'check',
+    'El cliente aceptó el cambio de hora',
+    (d) => `Código ${d.id}`,
+  ],
+  cliente_avisado: ['', 'chat', 'Aviso enviado al cliente por WhatsApp', (d) => `${d.telefono}`],
   whatsapp_conectado: ['ok', 'phone', 'WhatsApp conectado'],
   whatsapp_sesion_cerrada: [
     'bad',

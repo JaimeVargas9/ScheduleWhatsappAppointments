@@ -306,6 +306,113 @@ describe('validaciones en código de lo que pide el modelo', () => {
   });
 });
 
+describe('respuesta del cliente a un cambio hecho por el negocio', () => {
+  async function changedByBusiness() {
+    const s = setup();
+    const r = await s.booking.create(s.tenant, {
+      service: s.tenant.servicios[0]!,
+      location: s.tenant.ubicaciones[0]!,
+      phone: PHONE,
+      clientName: 'Marta Ruiz',
+      start: at('2026-10-29T10:00'),
+    });
+    if (!r.creada) throw new Error('debería crearse');
+    const moved = await s.booking.reschedule(s.tenant, r.cita, at('2026-10-30T12:00'), { byBusiness: true });
+    if (!moved.creada) throw new Error('debería moverse');
+    return { ...s, id: r.cita.id };
+  }
+
+  it('si el cliente acepta, se confirma la cita y deja de estar pendiente', async () => {
+    const s = await changedByBusiness();
+    const llm = new ScriptedLLM([
+      (m) => {
+        expect(m[0]!.content).toContain(
+          `${s.id}: Reunión inicial gratuita, viernes 30 de octubre a las 12:00`,
+        );
+        expect(m[0]!.content).toContain('PENDIENTE DE CONFIRMAR');
+        return { content: '', toolCalls: [{ name: 'confirmar_cita', arguments: { id: s.id } }] };
+      },
+      (m) => {
+        expect(lastTool(m)).toMatchObject({
+          confirmada: true,
+          cita: { cuando: 'viernes 30 de octubre a las 12:00' },
+        });
+        return {
+          content: '¡Perfecto! Queda confirmada para el viernes 30 de octubre a las 12:00.',
+          toolCalls: [],
+        };
+      },
+    ]);
+    const reply = await s.send(llm, 'Sí, me viene bien');
+    expect(reply).toContain('confirmada');
+    expect(appointmentsInRange(s.db, s.tenant.id, '2026-10-01', '2026-12-01')[0]).toMatchObject({
+      pendingConfirmation: false,
+      status: 'reprogramada',
+    });
+    expect(s.sheets.rows[1]![10]).toBe('Reprogramada');
+  });
+
+  it('si el cliente no puede, se le ofrecen huecos libres y se mueve a la hora que elige', async () => {
+    const s = await changedByBusiness();
+    const llm = new ScriptedLLM([
+      call('consultar_disponibilidad', {
+        servicio: 'Reunión inicial gratuita',
+        fecha_desde: '2026-11-02T10:00',
+      }),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'lunes 2 de noviembre a las 10:00' });
+        return { content: 'El lunes 2 de noviembre a las 10:00 está libre. ¿Te la cambio?', toolCalls: [] };
+      },
+      call('reprogramar_cita', { id: s.id, nuevo_inicio: '2026-11-02T10:00' }),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ reprogramada: true });
+        return { content: 'Hecho: lunes 2 de noviembre a las 10:00.', toolCalls: [] };
+      },
+    ]);
+    await s.send(llm, 'Ese día no puedo, ¿el lunes a las 10?');
+    await s.send(llm, 'Sí, perfecto');
+    expect(appointmentsInRange(s.db, s.tenant.id, '2026-10-01', '2026-12-01')[0]).toMatchObject({
+      pendingConfirmation: false,
+      start: '2026-11-02T09:00:00.000Z',
+    });
+  });
+});
+
+describe('red de seguridad de citas cambiadas por el negocio', () => {
+  it('si el modelo intenta crear otra cita, se mueve la pendiente en vez de duplicarla', async () => {
+    const s = setup();
+    const r = await s.booking.create(s.tenant, {
+      service: s.tenant.servicios[0]!,
+      location: s.tenant.ubicaciones[0]!,
+      phone: PHONE,
+      clientName: 'Marta Ruiz',
+      start: at('2026-10-29T10:00'),
+    });
+    if (!r.creada) throw new Error('debería crearse');
+    await s.booking.reschedule(s.tenant, r.cita, at('2026-10-30T12:00'), { byBusiness: true });
+    const llm = new ScriptedLLM([
+      call('crear_cita', {
+        servicio: 'Reunión inicial gratuita',
+        ubicacion: 'Videollamada',
+        inicio: '2026-11-02T09:00',
+        nombre_cliente: 'Marta Ruiz',
+      }),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ reprogramada: true, cita: { id: r.cita.id } });
+        return say('Movida al lunes 2 de noviembre a las 09:00.')(m);
+      },
+    ]);
+    await s.send(llm, 'Mejor el lunes a primera hora');
+    const citas = appointmentsInRange(s.db, s.tenant.id, '2026-10-01', '2026-12-01');
+    expect(citas).toHaveLength(1);
+    expect(citas[0]).toMatchObject({
+      id: r.cita.id,
+      pendingConfirmation: false,
+      start: '2026-11-02T08:00:00.000Z',
+    });
+  });
+});
+
 describe('doble reserva', () => {
   it('dos peticiones simultáneas al mismo hueco crean una sola cita', async () => {
     const s = setup();

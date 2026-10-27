@@ -73,7 +73,9 @@ function citaPublica(tenant: TenantConfig, c: Appointment) {
     direccion: c.address || undefined,
     profesional: c.professionalName ?? undefined,
     a_nombre_de: c.clientName,
-    estado: c.status,
+    estado: c.pendingConfirmation
+      ? 'cambiada por el negocio, pendiente de que el cliente confirme'
+      : c.status,
   };
 }
 
@@ -177,10 +179,20 @@ export const TOOLS: Tool[] = [
       const { dt, conHora } = parseFecha(a.inicio, tenant, now);
       if (!conHora) throw new ToolError('Falta la hora en "inicio". Usa AAAA-MM-DDTHH:MM.');
       checkWeekday(dt, userText);
-      const clientName = checkClientName(a.nombre_cliente, userMessagesText(db, conversationId));
       const existing = upcomingAppointmentsByPhone(db, tenant.id, phone, now.toUTC().toISO()!).find(
         (c) => c.serviceId === service.id,
       );
+      if (existing?.pendingConfirmation && !a.adicional) {
+        const r = await booking.reschedule(tenant, existing, dt);
+        return r.creada
+          ? {
+              reprogramada: true,
+              cita: citaPublica(tenant, r.cita),
+              nota: 'Era la cita que el negocio había cambiado: se ha movido a la hora que ha elegido el cliente, no se ha creado otra.',
+            }
+          : { reprogramada: false, pedido: huecoTexto(dt), ...r };
+      }
+      const clientName = checkClientName(a.nombre_cliente, userMessagesText(db, conversationId));
       if (existing && !a.adicional) {
         const c = citaPublica(tenant, existing);
         throw new ToolError(
@@ -243,6 +255,18 @@ export const TOOLS: Tool[] = [
       return r.creada
         ? { reprogramada: true, cita: citaPublica(tenant, r.cita) }
         : { reprogramada: false, pedido: huecoTexto(dt), ...r };
+    },
+  ),
+
+  tool(
+    'confirmar_cita',
+    'El cliente acepta la nueva fecha y hora de una cita que el negocio le ha cambiado (estado pendiente de confirmar).',
+    z.object({ id: z.string().describe('ID de la cita, p. ej. C-AB12CD') }),
+    async (a, { tenant, booking, phone }) => {
+      const cita = booking.findForClient(tenant, phone, a.id);
+      if (!cita.pendingConfirmation)
+        return { confirmada: true, cita: citaPublica(tenant, cita), nota: 'Ya estaba confirmada.' };
+      return { confirmada: true, cita: citaPublica(tenant, await booking.confirm(tenant, cita)) };
     },
   ),
 

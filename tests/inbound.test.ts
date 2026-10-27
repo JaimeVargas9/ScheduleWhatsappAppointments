@@ -3,9 +3,15 @@ import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
 import type { LLMProvider } from '../src/ai/llm.js';
 import { BookingService } from '../src/booking/service.js';
-import { getOrCreateConversation, updateConversation } from '../src/db/repos.js';
+import { getOrCreateConversation, messagesAfter, updateConversation, wasSentByBot } from '../src/db/repos.js';
 import type { TenantConfig } from '../src/tenants/schema.js';
-import { handleInbound, type Outcome, type PipelineDeps, type Transport } from '../src/whatsapp/inbound.js';
+import {
+  handleInbound,
+  notifyClient,
+  type Outcome,
+  type PipelineDeps,
+  type Transport,
+} from '../src/whatsapp/inbound.js';
 import { normalizeMessage, type Inbound } from '../src/whatsapp/jid.js';
 import { fakeGoogle } from './fakes.js';
 import { exampleTenant, testDb } from './helpers.js';
@@ -157,6 +163,35 @@ describe('deduplicación y colas', () => {
     updateConversation(s.db, conv.id, { handoff: true, handoffReason: 'pidió una persona' });
     expect(await s.handle(s.msg({}))).toBe('derivado');
     expect(s.sent).toEqual([]);
+  });
+});
+
+describe('avisos al cliente desde el panel', () => {
+  it('envía el aviso por el chat del cliente, lo guarda en su conversación y no se responde a sí mismo', async () => {
+    const s = setup();
+    const conv = getOrCreateConversation(s.db, s.tenant.id, ALLOWED, '1234567@lid');
+    const r = await notifyClient(s.deps, s.tenant, ALLOWED, 'Hemos cambiado tu cita', s.transport);
+    expect(r).toEqual({ sent: true });
+    expect(s.sent).toEqual([{ jid: '1234567@lid', text: 'Hemos cambiado tu cita', id: 'BOT1' }]);
+    expect(wasSentByBot(s.db, s.tenant.id, 'BOT1')).toBe(true);
+    expect(messagesAfter(s.db, conv.id, 0).map((m) => [m.role, m.content])).toEqual([
+      ['assistant', 'Hemos cambiado tu cita'],
+    ]);
+  });
+
+  it('en modo pruebas no escribe a números que no son de prueba', async () => {
+    const s = setup();
+    const r = await notifyClient(s.deps, s.tenant, STRANGER, 'hola', s.transport);
+    expect(r).toMatchObject({ sent: false, reason: expect.stringMatching(/modo pruebas/) });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('si WhatsApp no está conectado lo dice en vez de fallar', async () => {
+    const s = setup();
+    expect(await notifyClient(s.deps, s.tenant, ALLOWED, 'hola', undefined)).toMatchObject({
+      sent: false,
+      reason: expect.stringMatching(/no está conectado/),
+    });
   });
 });
 

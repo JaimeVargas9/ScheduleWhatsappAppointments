@@ -1,0 +1,1 @@
+ALTER TABLE `appointments` ADD `pending_confirmation` integer DEFAULT false NOT NULL;

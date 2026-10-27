@@ -12,6 +12,9 @@ const CLAIMED = new RegExp(
 );
 const CONFIRMED = new RegExp(`\\b(?:${PARTICIPLE}|reservamos|agendamos|te espero|nos vemos el)\\b`);
 
+const PROMISED_LIST =
+  /\b(estos|estas|siguientes|alguno de los|alguna de las)\s+(horarios|huecos|opciones|horas|alternativas)\b/;
+
 function times(text: string): Set<string> {
   const out = new Set<string>();
   for (const m of text.matchAll(TIME)) {
@@ -39,6 +42,9 @@ export function checkReply({ reply, toolResults, scheduleText, bookingDone }: Gu
   const invented = [...times(reply)].filter((t) => !known.has(t));
   if (invented.length) {
     return `Aviso interno: has mencionado la hora ${invented.join(', ')} sin comprobarla. No respondas todavía al cliente: llama AHORA a la herramienta consultar_disponibilidad (fecha_desde con formato AAAA-MM-DDTHH:MM, tomando la fecha del calendario de próximos días) y después responde usando solo lo que devuelva.`;
+  }
+  if (PROMISED_LIST.test(norm(reply)) && times(reply).size === 0) {
+    return 'Aviso interno: dices que le ofreces unas opciones, pero no has escrito ninguna. Escribe las opciones que devolvió consultar_disponibilidad, cada una con el día de la semana, la fecha y la hora.';
   }
   const knownDates = dayDates(grounding);
   const wrongDates = [...dayDates(reply)].filter((d) => !knownDates.has(d));

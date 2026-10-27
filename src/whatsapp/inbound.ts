@@ -2,6 +2,7 @@ import { runAgent, summarizeIfNeeded, type AgentDeps } from '../ai/agent.js';
 import {
   addLog,
   addMessage,
+  findConversation,
   getOrCreateConversation,
   markProcessed,
   rememberSent,
@@ -35,7 +36,7 @@ export const randomHumanDelay =
     new Promise<void>((r) => setTimeout(r, min + Math.random() * (max - min)));
 
 export async function sendTracked(
-  deps: PipelineDeps,
+  deps: Pick<PipelineDeps, 'db'>,
   tenantId: string,
   t: Transport,
   jid: string,
@@ -44,6 +45,37 @@ export async function sendTracked(
   const id = t.newMessageId();
   rememberSent(deps.db, tenantId, id);
   await t.sendText(jid, text, id);
+}
+
+function isAllowed(deps: Pick<PipelineDeps, 'allowedTestNumbers'>, tenant: TenantConfig, phone: string) {
+  return tenant.modo === 'live' || new Set([...deps.allowedTestNumbers, ...tenant.numeros_prueba]).has(phone);
+}
+
+export type NotifyResult = { sent: true } | { sent: false; reason: string };
+
+export async function notifyClient(
+  deps: Pick<PipelineDeps, 'db' | 'allowedTestNumbers'>,
+  tenant: TenantConfig,
+  phone: string,
+  text: string,
+  transport: Transport | undefined,
+): Promise<NotifyResult> {
+  if (!transport) return { sent: false, reason: 'el WhatsApp del negocio no está conectado' };
+  if (!isAllowed(deps, tenant, phone)) {
+    return {
+      sent: false,
+      reason: 'el negocio está en modo pruebas y este cliente no es un número de prueba',
+    };
+  }
+  return runExclusive(`conv:${tenant.id}:${phone}`, async () => {
+    const conv =
+      findConversation(deps.db, tenant.id, phone) ??
+      getOrCreateConversation(deps.db, tenant.id, phone, `${phone}@s.whatsapp.net`);
+    await sendTracked(deps, tenant.id, transport, conv.jid, text);
+    addMessage(deps.db, { conversationId: conv.id, role: 'assistant', content: text });
+    addLog(deps.db, 'info', 'cliente_avisado', tenant.id, { telefono: maskPhone(phone) });
+    return { sent: true } as const;
+  });
 }
 
 export async function handleInbound(
@@ -58,16 +90,13 @@ export async function handleInbound(
   if (!markProcessed(db, tenant.id, msg.id)) return 'duplicado';
   if (!tenant.activo) return 'inactivo';
 
-  if (tenant.modo === 'test') {
-    const allowed = new Set([...deps.allowedTestNumbers, ...tenant.numeros_prueba]);
-    if (!allowed.has(msg.phone)) {
-      log.info(
-        { tenant: tenant.id, from: maskPhone(msg.phone) },
-        'Modo test: mensaje ignorado de un número no permitido',
-      );
-      addLog(db, 'info', 'ignorado_modo_test', tenant.id, { telefono: maskPhone(msg.phone) });
-      return 'no_permitido';
-    }
+  if (!isAllowed(deps, tenant, msg.phone)) {
+    log.info(
+      { tenant: tenant.id, from: maskPhone(msg.phone) },
+      'Modo test: mensaje ignorado de un número no permitido',
+    );
+    addLog(db, 'info', 'ignorado_modo_test', tenant.id, { telefono: maskPhone(msg.phone) });
+    return 'no_permitido';
   }
 
   return runExclusive(`conv:${tenant.id}:${msg.phone}`, async () => {

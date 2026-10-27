@@ -64,6 +64,14 @@ describe('validador de respuestas del modelo', () => {
     ).toBeNull();
   });
 
+  it('rechaza prometer opciones sin escribir ninguna', () => {
+    const empty = { toolResults: [tool], scheduleText: schedule, bookingDone: false };
+    expect(checkReply({ ...empty, reply: '¿Te funciona alguno de estos horarios el lunes?' })).toMatch(
+      /no has escrito ninguna/,
+    );
+    expect(checkReply({ ...empty, reply: 'Tengo estos huecos: jueves 29 a las 9:15. ¿Te va?' })).toBeNull();
+  });
+
   it('convierte markdown a formato de WhatsApp', () => {
     expect(toWhatsApp('## Hola\n**Reunión** el [enlace](https://x.y)')).toBe(
       'Hola\n*Reunión* el enlace: https://x.y',
