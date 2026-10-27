@@ -107,7 +107,7 @@ export async function runAgent(
         messages.push({ role: 'user', content: `[Mensaje interno del sistema, no del cliente] ${problem}` });
         continue;
       }
-      const content = disclose(problem ? ASK_AGAIN : toWhatsApp(reply.content) || FALLBACK);
+      const content = disclose(problem ? ASK_AGAIN : toWhatsApp(reply.content, now) || FALLBACK);
       addMessage(db, { conversationId, role: 'assistant', content });
       return content;
     }

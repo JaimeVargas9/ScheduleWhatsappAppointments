@@ -189,8 +189,8 @@ describe('cambiar y cancelar citas desde la agenda', () => {
     expect(s.notified).toHaveLength(1);
     expect(s.notified[0]!.phone).toBe('34600111222');
     expect(s.notified[0]!.text).toContain('Hola Marta');
-    expect(s.notified[0]!.text).toContain('era el jueves 29 de octubre a las 10:00');
-    expect(s.notified[0]!.text).toContain('*viernes 30 de octubre a las 12:00*');
+    expect(s.notified[0]!.text).toContain('era el jueves 29/10/2026 a las 10:00');
+    expect(s.notified[0]!.text).toContain('*viernes 30/10/2026 a las 12:00*');
     expect(s.notified[0]!.text).toContain('Nos ha surgido un imprevisto.');
     expect(s.notified[0]!.text).toContain('¿Te viene bien?');
     expect(s.sheets.rows[1]![10]).toBe('Pendiente de confirmar');
@@ -242,7 +242,7 @@ describe('cambiar y cancelar citas desde la agenda', () => {
     });
     expect(res.status).toBe(200);
     expect(s.notified[0]!.text).toContain(
-      '*cancelar* tu cita de Reunión inicial gratuita del jueves 29 de octubre a las 10:00',
+      '*cancelar* tu cita de Reunión inicial gratuita del jueves 29/10/2026 a las 10:00',
     );
     expect(s.notified[0]!.text).toContain('Estamos de baja.');
     expect(s.sheets.rows[1]![10]).toBe('Cancelada');

@@ -8,6 +8,12 @@ node_modules/
 credentials/
 google-key*.json
 service-account*.json
+# Cualquier JSON suelto en la raíz (p. ej. una clave de Google descargada) salvo los del proyecto
+/*.json
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/.prettierrc.json
 *.pem
 *.key
 

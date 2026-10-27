@@ -65,7 +65,7 @@ describe('system prompt', () => {
       phone: PHONE,
       citas: [],
     });
-    expect(p).toContain('martes 27 de octubre de 2026, 12:35 (Europe/Madrid)');
+    expect(p).toContain('martes 27 de octubre de 2026 (27/10/2026), 12:35 (Europe/Madrid)');
     expect(p).toContain('Eres el asistente de WhatsApp de Mi Estudio Web');
     expect(p).toContain('Cliente: desconocido — teléfono +34600111222');
     expect(p).toContain('- Reunión inicial gratuita (30 min, Gratis)');
@@ -82,8 +82,8 @@ describe('system prompt', () => {
     await s.send(llm, 'hola');
     s.clock.now = at('2026-10-28T17:20');
     await s.send(llm, '¿sigues ahí?');
-    expect(llm.seen[0]![0]!.content).toContain('martes 27 de octubre de 2026, 09:00');
-    expect(llm.seen[1]![0]!.content).toContain('miércoles 28 de octubre de 2026, 17:20');
+    expect(llm.seen[0]![0]!.content).toContain('martes 27 de octubre de 2026 (27/10/2026), 09:00');
+    expect(llm.seen[1]![0]!.content).toContain('miércoles 28 de octubre de 2026 (28/10/2026), 17:20');
   });
 });
 
@@ -97,7 +97,7 @@ describe('flujo de reserva', () => {
         fecha_desde: '2026-10-29T10:00',
       }),
       (m) => {
-        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'jueves 29 de octubre a las 10:00' });
+        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'jueves 29/10/2026 a las 10:00' });
         return { content: 'Está libre. ¿A nombre de quién la reservo?', toolCalls: [] };
       },
       call('crear_cita', {
@@ -109,13 +109,13 @@ describe('flujo de reserva', () => {
       (m) => {
         expect(lastTool(m)).toMatchObject({
           creada: true,
-          cita: { cuando: 'jueves 29 de octubre a las 10:00' },
+          cita: { cuando: 'jueves 29/10/2026 a las 10:00' },
         });
         return { content: '¡Hecho! Te espero el jueves 29 a las 10:00 por videollamada.', toolCalls: [] };
       },
     ]);
 
-    await s.send(llm, 'Hola, quiero una reunión para mi web el jueves a las 10');
+    await s.send(llm, 'Hola, quiero una reunión para mi web el jueves a las 10 por videollamada');
     const reply = await s.send(llm, 'Sí, a nombre de Laura Gómez');
 
     expect(reply).toContain('Hecho');
@@ -178,13 +178,13 @@ describe('flujo de reserva', () => {
 
     const offer = await s.send(llm, 'Quiero una reunión el jueves a las 10');
     expect(ofrecidas.map((a) => a.texto)).toEqual([
-      'jueves 29 de octubre a las 09:15',
-      'jueves 29 de octubre a las 09:00',
-      'jueves 29 de octubre a las 11:15',
-      'jueves 29 de octubre a las 11:30',
-      'jueves 29 de octubre a las 11:45',
+      'jueves 29/10/2026 a las 09:15',
+      'jueves 29/10/2026 a las 09:00',
+      'jueves 29/10/2026 a las 11:15',
+      'jueves 29/10/2026 a las 11:30',
+      'jueves 29/10/2026 a las 11:45',
     ]);
-    expect(offer).toContain('jueves 29 de octubre a las 09:15');
+    expect(offer).toContain('jueves 29/10/2026 a las 09:15');
     await s.send(llm, 'Me va bien la primera, por teléfono. Soy Pedro');
 
     const citas = appointmentsInRange(s.db, s.tenant.id, '2026-10-01', '2026-12-01');
@@ -239,6 +239,109 @@ describe('flujo de reserva', () => {
   });
 });
 
+describe('hora elegida por el cliente', () => {
+  it('si el cliente pide una hora concreta, se comprueba esa hora aunque el modelo pase solo el día', async () => {
+    const s = setup();
+    const llm = new ScriptedLLM([
+      call('consultar_disponibilidad', { servicio: 'Reunión inicial gratuita', fecha_desde: '2026-10-29' }),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'jueves 29/10/2026 a las 10:00' });
+        return say('Libre.')(m);
+      },
+    ]);
+    await s.send(llm, 'El jueves a las 10');
+  });
+
+  it('no reserva una hora que el cliente no ha elegido', async () => {
+    const s = setup();
+    const crear = {
+      servicio: 'Reunión inicial gratuita',
+      ubicacion: 'Llamada telefónica',
+      inicio: '2026-10-29T09:00',
+      nombre_cliente: 'Laura Gil',
+    };
+    const llm = new ScriptedLLM([
+      call('consultar_disponibilidad', { servicio: 'Reunión inicial gratuita', fecha_desde: '2026-10-29' }),
+      say('Tengo jueves 29/10/2026 a las 09:00 o a las 12:45. ¿Cuál prefieres?'),
+      call('crear_cita', crear),
+      (m) => {
+        expect(lastTool(m).error).toMatch(/todavía no ha elegido la hora 09:00/);
+        return say('¿Qué hora prefieres?')(m);
+      },
+      call('crear_cita', crear),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ creada: true });
+        return say('Hecho.')(m);
+      },
+    ]);
+    await s.send(llm, 'Por teléfono, ¿qué tienes el jueves?');
+    await s.send(llm, 'A nombre de Laura Gil');
+    expect(s.calendar.events.size).toBe(0);
+    await s.send(llm, 'Vale, la primera');
+    expect(s.calendar.events.size).toBe(1);
+  });
+
+  it('una negativa no cuenta como aceptar la hora', async () => {
+    const s = setup();
+    const llm = new ScriptedLLM([
+      call('consultar_disponibilidad', { servicio: 'Reunión inicial gratuita', fecha_desde: '2026-10-29' }),
+      say('Tengo jueves 29/10/2026 a las 09:00. ¿Te va bien?'),
+      call('crear_cita', {
+        servicio: 'Reunión inicial gratuita',
+        ubicacion: 'Videollamada',
+        inicio: '2026-10-29T09:00',
+        nombre_cliente: 'Laura',
+      }),
+      (m) => {
+        expect(lastTool(m).error).toMatch(/todavía no ha elegido/);
+        return say('Vale, ¿qué hora te viene mejor?')(m);
+      },
+    ]);
+    await s.send(llm, 'Soy Laura, por videollamada, ¿el jueves?');
+    await s.send(llm, 'No me va bien');
+    expect(s.calendar.events.size).toBe(0);
+  });
+});
+
+describe('modalidad de la cita', () => {
+  it('el prompt ofrece las modalidades disponibles', () => {
+    const p = buildSystemPrompt(exampleTenant(), {
+      now: at('2026-10-27T12:35'),
+      clientName: null,
+      phone: PHONE,
+      citas: [],
+    });
+    expect(p).toContain('dándole las opciones: por videollamada o por teléfono');
+    expect(p).toContain('jueves 29/10/2026 (en herramientas: 2026-10-29)');
+  });
+
+  it('no crea la cita si el cliente no ha elegido la modalidad, y sí cuando la dice', async () => {
+    const s = setup();
+    const args = {
+      servicio: 'Reunión inicial gratuita',
+      ubicacion: 'Videollamada',
+      inicio: '2026-10-29T10:00',
+      nombre_cliente: 'Ana',
+    };
+    const llm = new ScriptedLLM([
+      call('crear_cita', args),
+      (m) => {
+        expect(lastTool(m).error).toMatch(/Pregúntale si la prefiere por videollamada o por teléfono/);
+        return say('¿La prefieres por videollamada o por teléfono?')(m);
+      },
+      call('crear_cita', args),
+      (m) => {
+        expect(lastTool(m)).toMatchObject({ creada: true });
+        return say('Hecho.')(m);
+      },
+    ]);
+    await s.send(llm, 'Soy Ana, el jueves a las 10');
+    expect(s.calendar.events.size).toBe(0);
+    await s.send(llm, 'Por videollamada');
+    expect(s.calendar.events.size).toBe(1);
+  });
+});
+
 describe('aviso de IA (Ley de IA de la UE)', () => {
   it('el primer mensaje siempre dice que es un asistente virtual, los siguientes no se repiten', async () => {
     const s = setup();
@@ -277,7 +380,7 @@ describe('validaciones en código de lo que pide el modelo', () => {
         };
       },
       (m) => {
-        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'viernes 30 de octubre a las 17:00' });
+        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'viernes 30/10/2026 a las 17:00' });
         return { content: 'Libre el viernes 30 a las 17:00.', toolCalls: [] };
       },
     ]);
@@ -326,19 +429,17 @@ describe('respuesta del cliente a un cambio hecho por el negocio', () => {
     const s = await changedByBusiness();
     const llm = new ScriptedLLM([
       (m) => {
-        expect(m[0]!.content).toContain(
-          `${s.id}: Reunión inicial gratuita, viernes 30 de octubre a las 12:00`,
-        );
+        expect(m[0]!.content).toContain(`${s.id}: Reunión inicial gratuita, viernes 30/10/2026 a las 12:00`);
         expect(m[0]!.content).toContain('PENDIENTE DE CONFIRMAR');
         return { content: '', toolCalls: [{ name: 'confirmar_cita', arguments: { id: s.id } }] };
       },
       (m) => {
         expect(lastTool(m)).toMatchObject({
           confirmada: true,
-          cita: { cuando: 'viernes 30 de octubre a las 12:00' },
+          cita: { cuando: 'viernes 30/10/2026 a las 12:00' },
         });
         return {
-          content: '¡Perfecto! Queda confirmada para el viernes 30 de octubre a las 12:00.',
+          content: '¡Perfecto! Queda confirmada para el viernes 30/10/2026 a las 12:00.',
           toolCalls: [],
         };
       },
@@ -360,13 +461,13 @@ describe('respuesta del cliente a un cambio hecho por el negocio', () => {
         fecha_desde: '2026-11-02T10:00',
       }),
       (m) => {
-        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'lunes 2 de noviembre a las 10:00' });
-        return { content: 'El lunes 2 de noviembre a las 10:00 está libre. ¿Te la cambio?', toolCalls: [] };
+        expect(lastTool(m)).toMatchObject({ libre: true, texto: 'lunes 02/11/2026 a las 10:00' });
+        return { content: 'El lunes 02/11/2026 a las 10:00 está libre. ¿Te la cambio?', toolCalls: [] };
       },
       call('reprogramar_cita', { id: s.id, nuevo_inicio: '2026-11-02T10:00' }),
       (m) => {
         expect(lastTool(m)).toMatchObject({ reprogramada: true });
-        return { content: 'Hecho: lunes 2 de noviembre a las 10:00.', toolCalls: [] };
+        return { content: 'Hecho: lunes 02/11/2026 a las 10:00.', toolCalls: [] };
       },
     ]);
     await s.send(llm, 'Ese día no puedo, ¿el lunes a las 10?');
@@ -399,7 +500,7 @@ describe('red de seguridad de citas cambiadas por el negocio', () => {
       }),
       (m) => {
         expect(lastTool(m)).toMatchObject({ reprogramada: true, cita: { id: r.cita.id } });
-        return say('Movida al lunes 2 de noviembre a las 09:00.')(m);
+        return say('Movida al lunes 02/11/2026 a las 09:00.')(m);
       },
     ]);
     await s.send(llm, 'Mejor el lunes a primera hora');

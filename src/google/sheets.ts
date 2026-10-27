@@ -28,15 +28,34 @@ const range = (tab: string, a1: string) => `'${tab.replace(/'/g, "''")}'!${a1}`;
 export function googleSheets(authClient: InstanceType<typeof auth.GoogleAuth>): SheetsClient {
   const api = sheets({ version: 'v4', auth: authClient });
 
-  async function ensureTab(t: SheetTarget) {
+  async function ensureTab(t: SheetTarget, rowsNeeded: number) {
     const meta = await api.spreadsheets.get({
       spreadsheetId: t.spreadsheetId,
-      fields: 'sheets.properties.title',
+      fields: 'sheets.properties.title,sheets.properties.sheetId,sheets.properties.gridProperties.rowCount',
     });
-    if (!meta.data.sheets?.some((s) => s.properties?.title === t.tab)) {
+    const tab = meta.data.sheets?.find((s) => s.properties?.title === t.tab)?.properties;
+    if (!tab) {
       await api.spreadsheets.batchUpdate({
         spreadsheetId: t.spreadsheetId,
         requestBody: { requests: [{ addSheet: { properties: { title: t.tab } } }] },
+      });
+      return;
+    }
+    const rowCount = tab.gridProperties?.rowCount ?? 0;
+    if (rowsNeeded > rowCount) {
+      await api.spreadsheets.batchUpdate({
+        spreadsheetId: t.spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              appendDimension: {
+                sheetId: tab.sheetId,
+                dimension: 'ROWS',
+                length: rowsNeeded - rowCount + 500,
+              },
+            },
+          ],
+        },
       });
     }
   }
@@ -52,14 +71,15 @@ export function googleSheets(authClient: InstanceType<typeof auth.GoogleAuth>): 
   return {
     readAll,
 
+    // Writes into the first free row instead of inserting one: inserted rows shift formulas that point at the tab.
     async appendRow(t, row) {
-      await ensureTab(t);
-      const values = (await readAll(t)).length === 0 ? [SHEET_HEADER, row] : [row];
-      await api.spreadsheets.values.append({
+      const existing = await readAll(t).catch(() => [] as string[][]);
+      const values = existing.length === 0 ? [SHEET_HEADER, row] : [row];
+      await ensureTab(t, existing.length + values.length);
+      await api.spreadsheets.values.update({
         spreadsheetId: t.spreadsheetId,
-        range: range(t.tab, 'A1'),
+        range: range(t.tab, `A${existing.length + 1}`),
         valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
         requestBody: { values },
       });
     },

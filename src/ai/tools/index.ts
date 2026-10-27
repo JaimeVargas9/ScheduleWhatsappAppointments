@@ -2,7 +2,12 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 import type { BookingService } from '../../booking/service.js';
 import type { Db } from '../../db/client.js';
-import { updateConversation, upcomingAppointmentsByPhone, userMessagesText } from '../../db/repos.js';
+import {
+  messagesAfter,
+  updateConversation,
+  upcomingAppointmentsByPhone,
+  userMessagesText,
+} from '../../db/repos.js';
 import type { Appointment } from '../../db/schema.js';
 import { huecoTexto } from '../../scheduling/format.js';
 import type { Hueco } from '../../scheduling/slots.js';
@@ -11,10 +16,13 @@ import type { ToolDefinition } from '../llm.js';
 import {
   ToolError,
   checkClientName,
+  checkModalityChosen,
+  checkTimeAgreed,
   checkWeekday,
   parseFecha,
   resolveLocation,
   resolveProfessional,
+  requestedTime,
   resolveService,
 } from './resolve.js';
 
@@ -134,6 +142,12 @@ export const TOOLS: Tool[] = [
       };
       const desde = parseFecha(a.fecha_desde, tenant, now);
       checkWeekday(desde.dt, userText);
+      const hora = !desde.conHora && !a.fecha_hasta ? requestedTime(userText) : null;
+      if (hora) {
+        const [h, m] = hora.split(':').map(Number);
+        desde.dt = desde.dt.set({ hour: h, minute: m });
+        desde.conHora = true;
+      }
       if (desde.conHora) {
         const r = await booking.check(tenant, req, desde.dt);
         return r.libre
@@ -192,7 +206,11 @@ export const TOOLS: Tool[] = [
             }
           : { reprogramada: false, pedido: huecoTexto(dt), ...r };
       }
-      const clientName = checkClientName(a.nombre_cliente, userMessagesText(db, conversationId));
+      const said = userMessagesText(db, conversationId);
+      const options = tenant.ubicaciones.filter((u) => u.activa && service.ubicaciones.includes(u.id));
+      checkModalityChosen(service, location, options, said);
+      const clientName = checkClientName(a.nombre_cliente, said);
+      checkTimeAgreed(dt, messagesAfter(db, conversationId, 0));
       if (existing && !a.adicional) {
         const c = citaPublica(tenant, existing);
         throw new ToolError(

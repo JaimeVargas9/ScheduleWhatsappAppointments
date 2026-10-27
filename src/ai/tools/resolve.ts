@@ -37,6 +37,94 @@ export function resolveService(tenant: TenantConfig, query: string): Servicio {
   );
 }
 
+const TIME =
+  /\b(?:a\s+las?|sobre\s+las?|desde\s+las?)\s+(\d{1,2})(?:[:.h](\d{2}))?\b|\b(\d{1,2})[:.](\d{2})\b/gi;
+
+export function times(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(TIME)) {
+    const h = Number(m[1] ?? m[3]);
+    const min = m[2] ?? m[4] ?? '00';
+    if (h <= 23) out.add(`${String(h).padStart(2, '0')}:${min}`);
+  }
+  return out;
+}
+
+export function requestedTime(userText: string): string | null {
+  const found = [...times(userText)];
+  return found.length === 1 ? found[0]! : null;
+}
+
+const AGREE =
+  /\b(si|vale|ok|okay|perfecto|de acuerdo|genial|claro|correcto|adelante|dale|bien|esa|ese|esta|primera|primero|segunda|segundo|tercera|tercero|ultima|ultimo|confirmo|confirmala|confirma|reservala|reserva|me va|me viene|me encaja|me sirve)\b/;
+
+const DISAGREE = /\bno (me |te |nos )?(va|viene|puedo|encaja|sirve|vale|quiero)\b|\bmejor no\b|\bninguna\b/;
+
+export type ChatTurn = { role: 'user' | 'assistant' | 'tool'; content: string };
+
+export function checkTimeAgreed(dt: DateTime, history: ChatTurn[]): void {
+  const hhmm = dt.toFormat('HH:mm');
+  const said = history.filter((m) => m.role === 'user').some((m) => times(m.content).has(hhmm));
+  if (said) return;
+  const offeredAt = history.findIndex((m) => m.role === 'assistant' && times(m.content).has(hhmm));
+  const agrees = (text: string) => AGREE.test(norm(text)) && !DISAGREE.test(norm(text));
+  const agreedAfter =
+    offeredAt >= 0 && history.slice(offeredAt + 1).some((m) => m.role === 'user' && agrees(m.content));
+  if (agreedAfter) return;
+  throw new ToolError(
+    `El cliente todavía no ha elegido la hora ${hhmm}. Ofrécele las horas libres y espera a que elija una antes de crear la cita.`,
+  );
+}
+
+const MODALIDAD: Record<Ubicacion['tipo'], string> = {
+  videollamada: 'por videollamada',
+  telefono: 'por teléfono',
+  presencial: 'en persona',
+};
+
+const KEYWORDS: Record<Ubicacion['tipo'], string[]> = {
+  videollamada: ['video', 'videollamada', 'videoconferencia', 'meet', 'zoom', 'teams', 'online', 'camara'],
+  telefono: [
+    'telefono',
+    'telefonica',
+    'telefonico',
+    'llamada',
+    'llamar',
+    'llamame',
+    'llamadme',
+    'movil',
+    'tlf',
+  ],
+  presencial: ['persona', 'presencial', 'presencialmente', 'local', 'oficina', 'estudio', 'alli', 'tienda'],
+};
+
+export function modalidadesTexto(ubicaciones: Ubicacion[]): string {
+  const frases = ubicaciones.map((u) =>
+    ubicaciones.filter((x) => x.tipo === u.tipo).length > 1
+      ? `${MODALIDAD[u.tipo]} (${u.nombre})`
+      : MODALIDAD[u.tipo],
+  );
+  const unicas = [...new Set(frases)];
+  return unicas.length > 1 ? `${unicas.slice(0, -1).join(', ')} o ${unicas.at(-1)}` : (unicas[0] ?? '');
+}
+
+export function checkModalityChosen(
+  service: Servicio,
+  location: Ubicacion,
+  allowed: Ubicacion[],
+  userText: string,
+): void {
+  if (allowed.length < 2) return;
+  const words = new Set(norm(userText).split(/[^\p{L}]+/u));
+  const nameWords = norm(location.nombre)
+    .split(/[^\p{L}]+/u)
+    .filter((w) => w.length >= 5);
+  if ([...KEYWORDS[location.tipo], ...nameWords].some((k) => words.has(k))) return;
+  throw new ToolError(
+    `El cliente no ha dicho cómo quiere la cita de ${service.nombre}. Pregúntale si la prefiere ${modalidadesTexto(allowed)}, y usa la que elija. No la elijas tú.`,
+  );
+}
+
 export function resolveLocation(tenant: TenantConfig, service: Servicio, query?: string): Ubicacion {
   const allowed = tenant.ubicaciones.filter((u) => u.activa && service.ubicaciones.includes(u.id));
   if (!allowed.length)

@@ -11,6 +11,7 @@ import type { LLMProvider } from '../ai/llm.js';
 import type { BookingService } from '../booking/service.js';
 import type { Db } from '../db/client.js';
 import {
+  addLog,
   appointmentsInRange,
   getAppointment,
   getConversation,
@@ -173,7 +174,9 @@ export function createAdminApp(deps: AdminDeps) {
   app.get('/api/tenants/:id/whatsapp', async (c) => c.json(await sessions.status(tenantOr404(c).id)));
 
   app.post('/api/tenants/:id/whatsapp/relink', async (c) => {
-    await sessions.logout(tenantOr404(c).id);
+    const id = tenantOr404(c).id;
+    await sessions.logout(id);
+    addLog(db, 'warn', 'whatsapp_desvinculado', id);
     return c.json({ ok: true });
   });
 

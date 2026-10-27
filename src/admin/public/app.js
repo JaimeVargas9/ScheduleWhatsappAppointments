@@ -1525,6 +1525,12 @@ const EVENTS = {
   ],
   cliente_avisado: ['', 'chat', 'Aviso enviado al cliente por WhatsApp', (d) => `${d.telefono}`],
   whatsapp_conectado: ['ok', 'phone', 'WhatsApp conectado'],
+  whatsapp_desvinculado: [
+    'warn',
+    'phone',
+    'Se desvinculó el WhatsApp desde el panel',
+    () => 'Hay que volver a escanear el código',
+  ],
   whatsapp_sesion_cerrada: [
     'bad',
     'phone',

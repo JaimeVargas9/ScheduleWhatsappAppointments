@@ -96,7 +96,7 @@ describe('huecos', () => {
         'Thu 09:30',
         'Thu 09:45',
       ]);
-      expect(r.alternativas[0]!.texto).toBe('miércoles 28 de octubre a las 13:30');
+      expect(r.alternativas[0]!.texto).toBe('miércoles 28/10/2026 a las 13:30');
     }
   });
 

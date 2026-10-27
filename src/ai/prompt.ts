@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import type { Appointment } from '../db/schema.js';
-import { fechaHoraLarga, huecoTexto } from '../scheduling/format.js';
+import { fechaDma, fechaHoraLarga, huecoTexto } from '../scheduling/format.js';
+import { modalidadesTexto } from './tools/resolve.js';
 import { DIAS, type TenantConfig } from '../tenants/schema.js';
 
 export const PROMPT_TEMPLATE = `Eres el asistente de WhatsApp de {{nombre_negocio}}, {{descripcion_negocio}}.
@@ -29,9 +30,9 @@ Mensaje de bienvenida (úsalo, con tus palabras, solo en el primer mensaje de la
 {{bienvenida}}
 
 Reglas:
-1. Responde en mensajes cortos, como en un chat real (máximo 3-4 líneas, unas 50 palabras), con este tono: {{tono}}. Responde en el idioma del cliente. Formato de WhatsApp: *negrita* con un solo asterisco, sin títulos ni markdown.
+1. Responde en mensajes cortos, como en un chat real (máximo 3-4 líneas, unas 50 palabras), con este tono: {{tono}}. Responde en el idioma del cliente. Formato de WhatsApp: *negrita* con un solo asterisco, sin títulos ni markdown. Escribe siempre las fechas al cliente con el día de la semana y el formato dd/mm/aaaa (por ejemplo: jueves 29/10/2026 a las 10:00); nunca uses el formato AAAA-MM-DD.
 2. Si el cliente no lo ha dicho, averigua qué necesita (tipo de web o de negocio) y propón el servicio adecuado. Por defecto, la "Reunión inicial gratuita".
-3. Para agendar necesitas: servicio, modalidad/ubicación, día, hora y el nombre a nombre del cual se reserva. Pregunta solo lo que falte, de uno en uno o de dos en dos.
+3. Para agendar necesitas: servicio, modalidad, día, hora y el nombre a nombre del cual se reserva. Pregunta solo lo que falte, de uno en uno o de dos en dos. Si el cliente no ha dicho cómo quiere la cita, pregúntaselo dándole las opciones: {{opciones_modalidad}}. No elijas tú la modalidad.
 4. NUNCA confirmes un hueco sin haber llamado antes a la herramienta consultar_disponibilidad.
 5. Si el día y la hora que pide el cliente están libres, resúmele la cita (servicio, día, hora, modalidad) y, cuando diga que sí, llama a crear_cita.
 6. Si el hueco está ocupado o fuera de horario, díselo con naturalidad y ofrécele como máximo 3-5 alternativas reales de las devueltas por la herramienta: primero las del mismo día y, si no hay, las de los días más cercanos. Indica siempre el día de la semana, la fecha y la hora. Cuando elija una, vuelve a confirmar y crea la cita.
@@ -77,9 +78,9 @@ export function textoHorario(tenant: TenantConfig, now: DateTime): string {
   }
   const hoy = now.toISODate()!;
   for (const f of tenant.festivos.filter((f) => f.fecha >= hoy))
-    lineas.push(`- Cerrado el ${f.fecha}: ${f.motivo}`);
+    lineas.push(`- Cerrado el ${fechaDma(f.fecha)}: ${f.motivo}`);
   for (const c of tenant.cierres.filter((c) => c.hasta >= hoy))
-    lineas.push(`- Cerrado del ${c.desde} al ${c.hasta}: ${c.motivo}`);
+    lineas.push(`- Cerrado del ${fechaDma(c.desde)} al ${fechaDma(c.hasta)}: ${c.motivo}`);
   const r = tenant.reglas;
   lineas.push(
     `- Las citas se piden con al menos ${r.antelacion_minima_min / 60} h de antelación y como máximo a ${r.max_dias_vista} días vista.`,
@@ -142,7 +143,7 @@ export function proximosDias(now: DateTime, dias = 14): string[] {
   return Array.from({ length: dias }, (_, i) => {
     const d = now.plus({ days: i }).setLocale('es');
     const etiqueta = i === 0 ? 'hoy ' : i === 1 ? 'mañana ' : '';
-    return `${etiqueta}${d.toFormat("cccc d 'de' LLLL")} = ${d.toISODate()}`;
+    return `${etiqueta}${d.toFormat('cccc dd/MM/yyyy')} (en herramientas: ${d.toISODate()})`;
   });
 }
 
@@ -168,6 +169,7 @@ export function buildSystemPrompt(
     citas_cliente: textoCitas(tenant, input.citas),
     lista_servicios_con_duracion: textoServicios(tenant),
     lista_ubicaciones: textoUbicaciones(tenant),
+    opciones_modalidad: modalidadesTexto(tenant.ubicaciones.filter((u) => u.activa)),
     horario: textoHorario(tenant, now),
     info_extra: textoInfo(tenant),
     bienvenida: tenant.bienvenida || '(saluda con naturalidad)',

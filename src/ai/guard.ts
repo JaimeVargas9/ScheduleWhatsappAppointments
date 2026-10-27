@@ -1,7 +1,6 @@
-import { norm } from './tools/resolve.js';
+import { DateTime } from 'luxon';
+import { norm, times } from './tools/resolve.js';
 
-const TIME =
-  /\b(?:a\s+las?|sobre\s+las?|desde\s+las?)\s+(\d{1,2})(?:[:.h](\d{2}))?\b|\b(\d{1,2})[:.](\d{2})\b/gi;
 const DAY_DATE = /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+(?:dia\s+)?(\d{1,2})\b/g;
 const PARTICIPLE =
   '(?:cread|reservad|confirmad|agendad|cancelad|registrad|programad|reprogramad|apuntad|anotad|movid|cambiad)[ao]s?';
@@ -14,16 +13,6 @@ const CONFIRMED = new RegExp(`\\b(?:${PARTICIPLE}|reservamos|agendamos|te espero
 
 const PROMISED_LIST =
   /\b(estos|estas|siguientes|alguno de los|alguna de las)\s+(horarios|huecos|opciones|horas|alternativas)\b/;
-
-function times(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of text.matchAll(TIME)) {
-    const h = Number(m[1] ?? m[3]);
-    const min = m[2] ?? m[4] ?? '00';
-    if (h <= 23) out.add(`${String(h).padStart(2, '0')}:${min}`);
-  }
-  return out;
-}
 
 function dayDates(text: string): Set<string> {
   return new Set([...norm(text).matchAll(DAY_DATE)].map((m) => `${m[1]} ${Number(m[2])}`));
@@ -58,8 +47,43 @@ export function checkReply({ reply, toolResults, scheduleText, bookingDone }: Gu
   return null;
 }
 
-export function toWhatsApp(text: string): string {
+const MESES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+const pad = (n: number) => String(n).padStart(2, '0');
+
+export function toDayMonthYear(text: string, now: DateTime): string {
+  const yearFor = (day: number, month: number) => {
+    const candidate = DateTime.fromObject({ year: now.year, month, day }, { zone: now.zone });
+    return candidate < now.startOf('day').minus({ days: 1 }) ? now.year + 1 : now.year;
+  };
   return text
+    .replace(/\b(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?\b/g, '$3/$2/$1 a las $4:$5')
+    .replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, '$3/$2/$1')
+    .replace(
+      new RegExp(`\\b(\\d{1,2}) de (${MESES.join('|')})(?: de (\\d{4}))?`, 'gi'),
+      (_m, d: string, mes: string, y?: string) => {
+        const day = Number(d);
+        const month = MESES.indexOf(mes.toLowerCase()) + 1;
+        return `${pad(day)}/${pad(month)}/${y ?? yearFor(day, month)}`;
+      },
+    )
+    .replace(/(\d{2}\/\d{2}\/\d{4})\s*\(\1\)/g, '$1');
+}
+
+export function toWhatsApp(text: string, now?: DateTime): string {
+  return (now ? toDayMonthYear(text, now) : text)
     .trim()
     .replace(/^\*\*?([^*]{60,})\*\*?(\s*\S{0,4})$/s, '$1$2')
     .replace(/\*\*(.+?)\*\*/g, '*$1*')
