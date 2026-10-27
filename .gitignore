@@ -1,0 +1,36 @@
+# Dependencias
+node_modules/
+
+# Secretos y configuración local (nunca se suben)
+.env
+.env.*
+!.env.example
+credentials/
+google-key*.json
+service-account*.json
+*.pem
+*.key
+
+# Datos privados de clientes y sesiones de WhatsApp
+data/
+sessions/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Archivos de trabajo locales
+PLAN.md
+.claude/
+*.tmp.ts
+*.log
+npm-debug.log*
+coverage/
+dist/
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

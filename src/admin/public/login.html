@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agendo · Entrar</title>
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/login.css" />
+  </head>
+  <body class="login-page">
+    <main class="card login">
+      <div class="brand">
+        <img src="/logo.svg" alt="" width="40" height="40" />
+        <span>Agendo</span>
+      </div>
+      <h1>Entra en tu panel</h1>
+      <p class="sub">Tu asistente de citas por WhatsApp</p>
+      <form method="post" action="/login">
+        <label class="field"
+          ><span>Usuario</span><input name="user" autocomplete="username" required autofocus
+        /></label>
+        <label class="field"
+          ><span>Contraseña</span
+          ><input name="password" type="password" autocomplete="current-password" required
+        /></label>
+        <p class="error" id="error" role="alert">El usuario o la contraseña no son correctos.</p>
+        <button class="btn btn-block" type="submit">Entrar</button>
+      </form>
+    </main>
+    <script>
+      if (location.search.includes('error')) document.getElementById('error').classList.add('show');
+    </script>
+  </body>
+</html>

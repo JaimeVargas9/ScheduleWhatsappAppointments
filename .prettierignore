@@ -1,0 +1,6 @@
+node_modules
+sessions
+data
+drizzle
+package-lock.json
+PLAN.md

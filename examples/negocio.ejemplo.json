@@ -1,0 +1,116 @@
+{
+  "id": "mi-estudio-web",
+  "nombre": "Mi Estudio Web",
+  "descripcion": "estudio de desarrollo de páginas web para empresas y negocios locales",
+  "tono": "profesional, cercano y directo; tutea al cliente salvo que él trate de usted",
+  "idioma": "es-ES",
+  "bienvenida": "¡Hola! 👋 Soy el asistente virtual de Mi Estudio Web, un asistente con inteligencia artificial. ¿En qué puedo ayudarte? Si quieres, te reservo una reunión inicial gratuita para hablar de tu web. Si prefieres hablar con una persona, dímelo.",
+  "zona_horaria": "Europe/Madrid",
+  "activo": true,
+  "modo": "test",
+  "numeros_prueba": [],
+  "responsable": {
+    "nombre": "",
+    "telefono": ""
+  },
+  "ubicaciones": [
+    {
+      "id": "videollamada",
+      "nombre": "Videollamada",
+      "tipo": "videollamada",
+      "direccion": "",
+      "detalles": "Por Google Meet. El enlace se envía después de reservar.",
+      "activa": true
+    },
+    {
+      "id": "llamada",
+      "nombre": "Llamada telefónica",
+      "tipo": "telefono",
+      "direccion": "",
+      "detalles": "Te llamamos al número desde el que escribes.",
+      "activa": true
+    },
+    {
+      "id": "presencial",
+      "nombre": "Presencial",
+      "tipo": "presencial",
+      "direccion": "",
+      "detalles": "",
+      "activa": false
+    }
+  ],
+  "servicios": [
+    {
+      "id": "reunion-inicial",
+      "nombre": "Reunión inicial gratuita",
+      "duracion_min": 30,
+      "precio": "Gratis",
+      "descripcion": "Para conocer el negocio y qué web necesita.",
+      "ubicaciones": ["videollamada", "llamada", "presencial"]
+    },
+    {
+      "id": "presupuesto",
+      "nombre": "Presentación de presupuesto",
+      "duracion_min": 45,
+      "descripcion": "Presentamos y explicamos el presupuesto preparado tras la reunión inicial.",
+      "ubicaciones": ["videollamada", "llamada", "presencial"]
+    },
+    {
+      "id": "revision-proyecto",
+      "nombre": "Revisión de proyecto en curso",
+      "duracion_min": 30,
+      "descripcion": "Seguimiento de un proyecto que ya estamos desarrollando.",
+      "restriccion": "Solo para clientes actuales. Pregunta si ya es cliente antes de ofrecerlo.",
+      "ubicaciones": ["videollamada", "llamada", "presencial"]
+    }
+  ],
+  "profesionales": [],
+  "horario": {
+    "lunes": [
+      ["09:00", "14:00"],
+      ["16:00", "19:00"]
+    ],
+    "martes": [
+      ["09:00", "14:00"],
+      ["16:00", "19:00"]
+    ],
+    "miercoles": [
+      ["09:00", "14:00"],
+      ["16:00", "19:00"]
+    ],
+    "jueves": [
+      ["09:00", "14:00"],
+      ["16:00", "19:00"]
+    ],
+    "viernes": [
+      ["09:00", "14:00"],
+      ["16:00", "19:00"]
+    ],
+    "sabado": [],
+    "domingo": []
+  },
+  "festivos": [],
+  "cierres": [],
+  "reglas": {
+    "antelacion_minima_min": 120,
+    "max_dias_vista": 30,
+    "margen_entre_citas_min": 15
+  },
+  "google": {
+    "calendar_id": "",
+    "spreadsheet_id": "",
+    "pestana": "Citas"
+  },
+  "info_extra": [
+    "Tipos de web que hacemos: web corporativa, tienda online, web de reservas de citas y landing page.",
+    "El presupuesto se da después de la reunión inicial.",
+    "No damos precios cerrados por WhatsApp."
+  ],
+  "politica_cancelacion": "Puedes cancelar o cambiar la cita sin coste avisando por este mismo WhatsApp.",
+  "pendientes": [
+    "CAMBIAR el nombre del negocio («Mi Estudio Web»)",
+    "Rellenar la dirección de la ubicación Presencial y activarla",
+    "Poner el teléfono del responsable",
+    "Configurar calendar_id y spreadsheet_id de Google"
+  ]
+}
